@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>ניהול הזמנות שירן - הגרסה המלאה</title>
+    <title>שירן קייקס - ניהול חכם</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
-        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, query } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
+        import { getAuth, signInWithRedirect, getRedirectResult, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAY2rawG2ChvPoC7zZyITFl0KEew8xddSQ",
@@ -24,10 +24,10 @@
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
+        const provider = new GoogleAuthProvider();
         const appId = 'shiran-cakes-v1';
 
-        // State
-        let currentUser = null;
+        let allOrders = [];
 
         onAuthStateChanged(auth, (user) => {
             const loader = document.getElementById('global-loader');
@@ -35,117 +35,147 @@
             const mainApp = document.getElementById('main-app');
             
             if (user) {
-                currentUser = user;
                 document.getElementById('user-name').innerText = "היי " + user.displayName.split(' ')[0] + " ✨";
                 listenToOrders(user.uid);
                 loader.classList.add('hidden');
                 loginScreen.classList.add('hidden');
                 mainApp.classList.remove('hidden');
             } else {
-                currentUser = null;
                 loader.classList.add('hidden');
                 loginScreen.classList.remove('hidden');
                 mainApp.classList.add('hidden');
             }
         });
 
-        window.login = async () => {
-            const provider = new GoogleAuthProvider();
-            try { await signInWithPopup(auth, provider); } 
-            catch (error) { document.getElementById('login-error').innerText = "שגיאה בהתחברות: " + error.message; }
-        };
-
+        window.login = () => signInWithRedirect(auth, provider);
         window.logout = () => { if(confirm("להתנתק?")) signOut(auth); };
 
         function listenToOrders(uid) {
             const q = collection(db, 'artifacts', appId, 'users', uid, 'orders');
             onSnapshot(q, (snapshot) => {
-                const orders = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-                render(orders);
-            }, (err) => console.error(err));
+                allOrders = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+                render(allOrders);
+            });
         }
 
         window.saveOrder = async (data) => {
-            if (!currentUser) return;
-            const ref = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'orders', data.id);
+            const user = auth.currentUser;
+            if (!user) return;
+            const ref = doc(db, 'artifacts', appId, 'users', user.uid, 'orders', data.id);
             await setDoc(ref, data);
         };
 
         window.deleteOrder = async (id) => {
             if (confirm("למחוק את ההזמנה?")) {
-                await deleteDoc(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'orders', id));
+                const user = auth.currentUser;
+                await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'orders', id));
             }
         };
 
-        // Smart Paste Logic
         window.analyzePaste = (text) => {
-            const lines = text.split('\n');
-            let name = "", date = "", details = text;
-
-            // Simple heuristic analysis
             const nameMatch = text.match(/(?:שם|לקוח|עבור|לכבוד)[:\s-]\s*([א-ת\s]+)/);
-            if (nameMatch) name = nameMatch[1].trim();
-
             const dateMatch = text.match(/(\d{1,2}[\/.]\d{1,2}[\/.]\d{2,4})/);
+            const timeMatch = text.match(/(\d{1,2}:\d{2})/);
+            
+            if (nameMatch) document.getElementById('cust-name').value = nameMatch[1].trim();
             if (dateMatch) {
                 const parts = dateMatch[1].split(/[\/.]/);
-                if (parts[2] && parts[2].length === 2) parts[2] = "20" + parts[2];
-                date = `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
+                if (parts[2]?.length === 2) parts[2] = "20" + parts[2];
+                document.getElementById('cust-date').value = `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
             }
+            if (timeMatch) {
+                document.getElementById('cust-pickup-slot').value = "custom";
+                document.getElementById('custom-time-input').classList.remove('hidden');
+                document.getElementById('cust-time').value = timeMatch[1];
+            }
+            document.getElementById('cust-desc').value = text;
+        };
 
-            if (name) document.getElementById('cust-name').value = name;
-            if (date) document.getElementById('cust-date').value = date;
-            document.getElementById('cust-desc').value = details;
+        window.handleImageUpload = (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                window.currentImageData = e.target.result;
+                document.getElementById('img-preview').src = e.target.result;
+                document.getElementById('img-preview-container').classList.remove('hidden');
+            };
+            reader.readAsDataURL(file);
+        };
+
+        window.toggleTimeInput = (val) => {
+            const customInput = document.getElementById('custom-time-input');
+            if (val === 'custom') customInput.classList.remove('hidden');
+            else customInput.classList.add('hidden');
+        };
+
+        window.filterOrders = (type) => {
+            const now = new Date();
+            const todayStr = now.toISOString().split('T')[0];
+            let filtered = allOrders;
+
+            if (type === 'today') {
+                filtered = allOrders.filter(o => o.date === todayStr);
+            } else if (type === 'week') {
+                const nextWeek = new Date();
+                nextWeek.setDate(now.getDate() + 7);
+                filtered = allOrders.filter(o => {
+                    const d = new Date(o.date);
+                    return d >= now && d <= nextWeek;
+                });
+            }
+            render(filtered);
         };
     </script>
 
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;600;700&display=swap');
-        body { font-family: 'Assistant', sans-serif; }
-        .pink-gradient { background: linear-gradient(135deg, #fff5f7 0%, #ffe4e6 100%); }
-        .order-card { transition: transform 0.2s, box-shadow 0.2s; }
-        .order-card:active { transform: scale(0.98); }
-        input:focus, textarea:focus { border-color: #f472b6 !important; ring: 2px #fbcfe8; }
+        body { font-family: 'Assistant', sans-serif; background: #fdf2f8; }
+        .pink-glass { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); }
+        .tab-active { background: #ec4899; color: white; }
     </style>
 </head>
-<body class="pink-gradient min-h-screen pb-24">
+<body class="min-h-screen pb-32">
 
     <div id="global-loader" class="fixed inset-0 bg-white z-[200] flex flex-col items-center justify-center">
         <div class="w-12 h-12 border-4 border-pink-100 border-t-pink-500 rounded-full animate-spin mb-4"></div>
-        <p class="text-pink-500 font-semibold italic">שירן קייקס - מיד מתחילים...</p>
+        <p class="text-pink-500 font-bold italic">שירן קייקס - מיד איתך...</p>
     </div>
 
     <div id="login-screen" class="hidden flex flex-col items-center justify-center min-h-screen p-6">
-        <div class="bg-white/90 backdrop-blur-xl p-10 rounded-[3rem] shadow-2xl flex flex-col items-center w-full max-w-sm border border-white">
-            <div class="w-24 h-24 bg-pink-100 rounded-full flex items-center justify-center text-5xl mb-6 shadow-inner">🧁</div>
-            <h1 class="text-3xl font-bold text-slate-800 mb-1">שירן קייקס</h1>
-            <p class="text-slate-400 mb-8 text-sm italic text-center">הופכת כל רגע למתוק יותר</p>
-            <button onclick="login()" class="w-full flex items-center justify-center gap-3 bg-slate-900 text-white py-4 rounded-2xl font-bold shadow-xl hover:bg-slate-800 active:scale-95 transition-all">
+        <div class="bg-white p-10 rounded-[3rem] shadow-2xl flex flex-col items-center w-full max-w-sm border border-pink-50">
+            <div class="text-6xl mb-6">🍰</div>
+            <h1 class="text-3xl font-bold text-slate-800 mb-1">ניהול הזמנות</h1>
+            <p class="text-slate-400 mb-8 text-sm italic">שירן קייקס</p>
+            <button onclick="login()" class="w-full flex items-center justify-center gap-3 bg-slate-900 text-white py-4 rounded-2xl font-bold shadow-xl">
                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/action/google/lightweight/icon-google.svg" class="w-6 h-6 bg-white rounded-full p-1">
                 כניסה למערכת
             </button>
-            <p id="login-error" class="text-red-500 text-xs mt-4 text-center"></p>
         </div>
     </div>
 
     <div id="main-app" class="hidden">
-        <header class="bg-white/80 backdrop-blur-md p-5 sticky top-0 z-40 flex justify-between items-center border-b border-pink-100 shadow-sm">
-            <div class="flex items-center gap-3">
-                <div class="w-10 h-10 bg-pink-500 rounded-2xl flex items-center justify-center text-white font-bold shadow-lg rotate-3">ש</div>
-                <span id="user-name" class="font-bold text-slate-700"></span>
+        <header class="pink-glass p-4 sticky top-0 z-40 border-b border-pink-100 shadow-sm">
+            <div class="flex justify-between items-center mb-4">
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 bg-pink-500 rounded-xl flex items-center justify-center text-white font-bold">ש</div>
+                    <span id="user-name" class="font-bold text-slate-700 text-sm"></span>
+                </div>
+                <button onclick="logout()" class="text-slate-300"><i data-lucide="log-out" class="w-5 h-5"></i></button>
             </div>
-            <button onclick="logout()" class="text-slate-300 hover:text-pink-500 transition-colors">
-                <i data-lucide="log-out" class="w-6 h-6"></i>
-            </button>
+            
+            <!-- Quick Filters -->
+            <div class="flex gap-2 text-xs font-bold">
+                <button onclick="filterOrders('all')" class="flex-1 py-2 rounded-xl bg-white border border-pink-100 text-pink-500">הכל</button>
+                <button onclick="filterOrders('today')" class="flex-1 py-2 rounded-xl bg-white border border-pink-100 text-pink-500">היום</button>
+                <button onclick="filterOrders('week')" class="flex-1 py-2 rounded-xl bg-white border border-pink-100 text-pink-500">השבוע</button>
+            </div>
         </header>
 
-        <main class="p-5 max-w-md mx-auto">
-            <div id="orders-list" class="space-y-4"></div>
-        </main>
+        <main class="p-4 max-w-md mx-auto space-y-4" id="orders-list"></main>
 
-        <!-- Floating Action Button -->
         <div class="fixed bottom-8 left-0 right-0 flex justify-center pointer-events-none z-50">
-            <button onclick="openModal()" class="w-16 h-16 bg-pink-500 text-white rounded-full shadow-2xl shadow-pink-300 flex items-center justify-center active:scale-90 transition-all pointer-events-auto border-4 border-white">
+            <button onclick="openModal()" class="w-16 h-16 bg-pink-500 text-white rounded-full shadow-2xl flex items-center justify-center active:scale-90 transition-all pointer-events-auto border-4 border-white">
                 <i data-lucide="plus" class="w-8 h-8"></i>
             </button>
         </div>
@@ -153,42 +183,49 @@
 
     <!-- Modal -->
     <div id="modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] hidden flex items-center justify-center p-4">
-        <div class="bg-white w-full max-w-lg rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+        <div class="bg-white w-full max-w-lg rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col max-h-[95vh]">
             <div class="p-6 bg-pink-50 flex justify-between items-center border-b border-pink-100">
-                <h2 class="text-xl font-bold text-pink-700">פרטי הזמנה</h2>
-                <button onclick="closeModal()" class="text-pink-300 hover:text-pink-500"><i data-lucide="x-circle"></i></button>
+                <h2 class="text-xl font-bold text-pink-700">הזמנה חדשה ✨</h2>
+                <button onclick="closeModal()" class="text-pink-300"><i data-lucide="x-circle"></i></button>
             </div>
             
-            <div class="p-6 overflow-y-auto space-y-5">
-                <!-- Smart Paste Section -->
-                <div class="bg-blue-50 p-4 rounded-2xl border border-blue-100">
-                    <p class="text-xs font-bold text-blue-400 mb-2">הדביקי הודעה מהוואטסאפ לזיהוי מהיר:</p>
-                    <textarea oninput="analyzePaste(this.value)" placeholder="הדביקי כאן..." class="w-full p-3 text-sm bg-white/50 border border-blue-200 rounded-xl outline-none focus:bg-white resize-none h-16"></textarea>
+            <div class="p-6 overflow-y-auto space-y-4">
+                <div class="bg-blue-50 p-3 rounded-2xl border border-blue-100">
+                    <p class="text-[10px] font-bold text-blue-400 mb-1">הדבקת הודעה לזיהוי אוטומטי:</p>
+                    <textarea oninput="analyzePaste(this.value)" placeholder="הדביקי הודעת וואטסאפ..." class="w-full p-3 text-sm bg-white/80 border border-blue-200 rounded-xl outline-none h-12 resize-none"></textarea>
                 </div>
 
-                <form onsubmit="event.preventDefault(); handleNewOrder();" class="space-y-4">
-                    <div class="grid grid-cols-2 gap-3">
-                        <div class="col-span-2">
-                            <label class="block text-xs font-bold text-slate-400 mb-1 mr-2">שם לקוחה</label>
-                            <input type="text" id="cust-name" class="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none" required>
-                        </div>
-                        <div class="col-span-2">
-                            <label class="block text-xs font-bold text-slate-400 mb-1 mr-2">תאריך איסוף</label>
-                            <input type="date" id="cust-date" class="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none" required>
-                        </div>
+                <form onsubmit="event.preventDefault(); handleNewOrder();" class="space-y-3">
+                    <input type="text" id="cust-name" placeholder="שם הלקוחה" class="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none" required>
+                    
+                    <div class="grid grid-cols-2 gap-2">
+                        <input type="date" id="cust-date" class="p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none" required>
+                        <select id="cust-pickup-slot" onchange="toggleTimeInput(this.value)" class="p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none text-sm">
+                            <option value="בוקר">בוקר (08:00-12:00)</option>
+                            <option value="צהריים">צהריים (12:00-16:00)</option>
+                            <option value="ערב">ערב (16:00-21:00)</option>
+                            <option value="custom">שעה ספציפית...</option>
+                        </select>
+                    </div>
+
+                    <div id="custom-time-input" class="hidden">
+                        <input type="time" id="cust-time" class="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none">
                     </div>
                     
-                    <div>
-                        <label class="block text-xs font-bold text-slate-400 mb-1 mr-2">תיאור ופרטים</label>
-                        <textarea id="cust-desc" class="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none h-32"></textarea>
+                    <textarea id="cust-desc" placeholder="מה בתפריט? פירוט הזמנה..." class="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none h-24"></textarea>
+
+                    <div class="flex gap-2 items-center">
+                        <label class="flex-1 flex items-center justify-center gap-2 p-4 bg-pink-50 border-2 border-dashed border-pink-200 rounded-2xl text-pink-500 cursor-pointer">
+                            <i data-lucide="image" class="w-5 h-5"></i>
+                            <span class="text-sm font-bold">הוספת תמונה</span>
+                            <input type="file" accept="image/*" onchange="handleImageUpload(event)" class="hidden">
+                        </label>
+                    </div>
+                    <div id="img-preview-container" class="hidden relative">
+                        <img id="img-preview" class="w-full h-32 object-cover rounded-2xl">
                     </div>
 
-                    <div>
-                        <label class="block text-xs font-bold text-slate-400 mb-1 mr-2">תמונה/השראה (URL)</label>
-                        <input type="text" id="cust-img" placeholder="הדביקי קישור לתמונה במידה ויש" class="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none text-sm">
-                    </div>
-
-                    <button type="submit" id="save-btn" class="w-full bg-pink-500 text-white py-4 rounded-2xl font-bold shadow-lg shadow-pink-100 active:scale-95 transition-all mt-4">שמירת הזמנה ✨</button>
+                    <button type="submit" id="save-btn" class="w-full bg-pink-500 text-white py-4 rounded-2xl font-bold shadow-lg">שמירה למערכת ✨</button>
                 </form>
             </div>
         </div>
@@ -201,38 +238,31 @@
         function render(orders) {
             const list = document.getElementById('orders-list');
             if (orders.length === 0) {
-                list.innerHTML = `<div class="text-center py-20 opacity-30 font-bold"><p>אין הזמנות כרגע...</p></div>`;
+                list.innerHTML = `<div class="text-center py-20 opacity-30 font-bold"><p>אין הזמנות תואמות</p></div>`;
                 lucide.createIcons();
                 return;
             }
 
             const sorted = orders.sort((a,b) => new Date(a.date) - new Date(b.date));
-            
             list.innerHTML = sorted.map(o => {
-                const date = new Date(o.date);
-                const isToday = new Date().toDateString() === date.toDateString();
+                const isToday = new Date().toISOString().split('T')[0] === o.date;
+                const timeDisplay = o.pickupSlot === 'custom' ? o.customTime : o.pickupSlot;
                 
                 return `
-                <div class="order-card bg-white rounded-[2rem] shadow-sm border border-pink-50 overflow-hidden relative">
-                    ${o.image ? `<img src="${o.image}" class="w-full h-40 object-cover opacity-90" onerror="this.style.display='none'">` : ''}
+                <div class="bg-white rounded-[2rem] shadow-sm border border-pink-100 overflow-hidden relative">
+                    ${o.image ? `<img src="${o.image}" class="w-full h-40 object-cover">` : ''}
                     <div class="p-5">
                         <div class="flex justify-between items-start mb-3">
-                            <div class="text-left flex gap-2">
-                                <button onclick="window.deleteOrder('${o.id}')" class="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-300 hover:text-red-500 transition-colors">
-                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
-                                </button>
-                            </div>
                             <div class="text-right">
                                 <h3 class="font-bold text-slate-800 text-lg leading-tight">${o.name}</h3>
-                                <div class="flex items-center gap-1 justify-end mt-1 ${isToday ? 'text-green-500 animate-pulse' : 'text-pink-500'} font-bold text-sm">
-                                    <span>${o.date.split('-').reverse().join('/')}</span>
-                                    <i data-lucide="calendar" class="w-3 h-3"></i>
+                                <div class="flex items-center gap-2 justify-end mt-1 font-bold text-xs">
+                                    <span class="${isToday ? 'text-green-500 animate-pulse' : 'text-slate-400'}">${o.date.split('-').reverse().join('/')}</span>
+                                    <span class="bg-pink-100 text-pink-600 px-2 py-0.5 rounded-lg">${timeDisplay}</span>
                                 </div>
                             </div>
+                            <button onclick="window.deleteOrder('${o.id}')" class="text-slate-200 p-1"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
                         </div>
-                        <div class="bg-slate-50/50 p-4 rounded-2xl text-slate-600 text-sm whitespace-pre-wrap leading-relaxed border border-slate-50 italic">
-                            ${o.details || 'ללא פירוט'}
-                        </div>
+                        <div class="bg-slate-50 p-3 rounded-2xl text-slate-600 text-sm whitespace-pre-wrap">${o.details || 'ללא פירוט'}</div>
                     </div>
                 </div>
                 `;
@@ -242,16 +272,17 @@
 
         async function handleNewOrder() {
             const btn = document.getElementById('save-btn');
-            const originalText = btn.innerText;
             btn.disabled = true;
-            btn.innerHTML = 'שומר...';
+            btn.innerText = 'שומר...';
             
             const data = {
                 id: Date.now().toString(),
                 name: document.getElementById('cust-name').value,
                 date: document.getElementById('cust-date').value,
+                pickupSlot: document.getElementById('cust-pickup-slot').value,
+                customTime: document.getElementById('cust-time').value,
                 details: document.getElementById('cust-desc').value,
-                image: document.getElementById('cust-img').value,
+                image: window.currentImageData || null,
                 createdAt: new Date().toISOString()
             };
             
@@ -259,15 +290,12 @@
                 await window.saveOrder(data);
                 closeModal();
                 document.querySelector('form').reset();
-                document.querySelectorAll('textarea').forEach(t => t.value = "");
-            } catch (e) {
-                alert("תקלה בשמירה: " + e.message);
-            } finally {
-                btn.disabled = false;
-                btn.innerText = originalText;
-            }
+                window.currentImageData = null;
+                document.getElementById('img-preview-container').classList.add('hidden');
+                document.getElementById('custom-time-input').classList.add('hidden');
+            } catch (e) { alert("תקלה בשמירה"); }
+            finally { btn.disabled = false; btn.innerText = 'שמירה למערכת ✨'; }
         }
-        
         lucide.createIcons();
     </script>
 </body>
