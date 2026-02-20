@@ -9,10 +9,9 @@
     
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
-        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
+        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
 
-        // הפרטים שלך מה-Firebase
         const firebaseConfig = {
             apiKey: "AIzaSyAY2rawG2ChvPoC7zZyITFl0KEew8xddSQ",
             authDomain: "shiran-cakes.firebaseapp.com",
@@ -47,11 +46,14 @@
 
         window.login = async () => {
             const provider = new GoogleAuthProvider();
+            const errorText = document.getElementById('login-error');
+            errorText.innerText = "";
+            
             try {
                 await signInWithPopup(auth, provider);
             } catch (error) {
                 console.error("Login failed", error);
-                alert("התחברות נכשלה. ודאי ששמרת את הגדרות ה-Google Login ב-Firebase");
+                errorText.innerText = "שגיאה: " + error.message + " \n ודאי שהוספת את הדומיין ב-Firebase Settings -> Authorized domains";
             }
         };
 
@@ -102,10 +104,11 @@
                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/action/google/lightweight/icon-google.svg" class="w-6 h-6">
                 כניסה עם גוגל
             </button>
+            <p id="login-error" class="text-red-500 text-xs mt-4 text-center leading-tight"></p>
         </div>
     </div>
 
-    <div id="main-app" class="hidden">
+    <div id="main-app" class="hidden text-right">
         <header class="bg-white/70 backdrop-blur-md p-4 sticky top-0 z-50 flex justify-between items-center border-b border-pink-100">
             <div class="flex items-center gap-2">
                 <div class="w-8 h-8 bg-pink-500 rounded-full flex items-center justify-center text-white text-xs font-bold">ש</div>
@@ -132,17 +135,17 @@
                 <h2 class="text-xl font-bold text-slate-800">הזמנה חדשה</h2>
                 <button onclick="closeModal()" class="text-slate-300 hover:text-slate-500"><i data-lucide="x"></i></button>
             </div>
-            <form onsubmit="event.preventDefault(); handleNewOrder();" class="space-y-4 text-right">
+            <form onsubmit="event.preventDefault(); handleNewOrder();" class="space-y-4">
                 <div>
                     <label class="block text-xs font-bold text-slate-400 mb-1 mr-2">שם הלקוחה</label>
                     <input type="text" id="cust-name" placeholder="מי הזמינה?" class="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-pink-300 transition-all text-right" required>
                 </div>
                 <div>
-                    <label class="block text-xs font-bold text-slate-400 mb-1 mr-2">תאריך איסוף</label>
+                    <label class="block text-xs font-bold text-slate-400 mb-1 mr-2 text-right">תאריך איסוף</label>
                     <input type="date" id="cust-date" class="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-pink-300 transition-all text-right" required>
                 </div>
                 <div>
-                    <label class="block text-xs font-bold text-slate-400 mb-1 mr-2">פרטי העוגה</label>
+                    <label class="block text-xs font-bold text-slate-400 mb-1 mr-2 text-right">פרטי העוגה</label>
                     <textarea id="cust-desc" placeholder="סוג עוגה, הקדשה, הערות..." class="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-pink-300 transition-all text-right" rows="4"></textarea>
                 </div>
                 <button type="submit" id="save-btn" class="w-full bg-pink-500 text-white py-4 rounded-2xl font-bold shadow-lg shadow-pink-200 active:scale-95 transition-all">שמור הזמנה</button>
@@ -162,21 +165,20 @@
                     <div class="flex flex-col items-center justify-center py-20 text-slate-300">
                         <i data-lucide="calendar-heart" class="w-16 h-16 mb-4 opacity-20"></i>
                         <p class="font-bold">אין עדיין הזמנות</p>
-                        <p class="text-xs">לחצי על הפלוס כדי להתחיל</p>
+                        <p class="text-xs text-center">לחצי על הפלוס כדי להתחיל</p>
                     </div>`;
                 lucide.createIcons();
                 return;
             }
             
-            // מיון לפי תאריך (הקרוב ביותר ראשון)
             list.innerHTML = orders.sort((a,b) => new Date(a.date) - new Date(b.date)).map(o => {
                 const orderDate = new Date(o.date);
                 const isToday = new Date().toDateString() === orderDate.toDateString();
                 
                 return `
-                <div class="bg-white p-5 rounded-3xl shadow-sm border border-pink-50 text-right relative group">
+                <div class="bg-white p-5 rounded-3xl shadow-sm border border-pink-50 text-right relative">
                     <div class="flex justify-between items-start mb-2">
-                        <button onclick="window.deleteOrder('${o.id}')" class="text-slate-200 hover:text-red-400 transition-colors">
+                        <button onclick="window.deleteOrder('${o.id}')" class="text-slate-200 hover:text-red-400">
                             <i data-lucide="trash-2" class="w-4 h-4"></i>
                         </button>
                         <div class="flex flex-col items-end">
@@ -211,7 +213,7 @@
                 closeModal();
                 document.querySelector('form').reset();
             } catch (e) {
-                alert("שגיאה בשמירה. נסי שוב.");
+                alert("שגיאה בשמירה.");
             } finally {
                 btn.disabled = false;
                 btn.innerText = "שמור הזמנה";
