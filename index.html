@@ -2,353 +2,235 @@
 <html lang="he" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ניהול הזמנות עוגות - שירן</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ניהול הזמנות - שירן</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
-        import { getFirestore, collection, doc, setDoc, onSnapshot, deleteDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
-
-        // Firebase Configuration (Using runtime provided config or empty for local mode)
-        const firebaseConfig = window.__firebase_config ? JSON.parse(window.__firebase_config) : null;
-        const appId = window.__app_id || 'cake-tracker-shiran';
-
-        // State Management
-        let orders = [];
-        let isCloudMode = false;
-
-        // UI Elements
-        const ordersList = document.getElementById('orders-list');
-        const modal = document.getElementById('order-modal');
-        const loadingScreen = document.getElementById('loading-screen');
-        const cloudStatus = document.getElementById('cloud-status');
-
-        // --- Core Logic ---
-
-        const init = async () => {
-            // טיימר בטיחות: אם הענן לא עולה תוך 5 שניות, עבור למצב מקומי
-            const cloudTimeout = setTimeout(() => {
-                if (!isCloudMode) {
-                    console.log("Switching to local mode due to timeout");
-                    startLocalMode();
-                }
-            }, 5000);
-
-            if (firebaseConfig && firebaseConfig.apiKey) {
-                try {
-                    const app = initializeApp(firebaseConfig);
-                    const auth = getAuth(app);
-                    const db = getFirestore(app);
-
-                    onAuthStateChanged(auth, (user) => {
-                        if (user) {
-                            clearTimeout(cloudTimeout);
-                            isCloudMode = true;
-                            startCloudMode(db);
-                        } else {
-                            signInAnonymously(auth);
-                        }
-                    });
-                } catch (e) {
-                    console.error("Cloud init failed", e);
-                    startLocalMode();
-                }
-            } else {
-                // אין הגדרות ענן - התחל ישר מצב מקומי
-                clearTimeout(cloudTimeout);
-                startLocalMode();
-            }
-        };
-
-        const startLocalMode = () => {
-            isCloudMode = false;
-            cloudStatus.innerHTML = '<span class="text-yellow-200">מצב מקומי (ללא גיבוי)</span>';
-            const saved = localStorage.getItem('cake_orders_local');
-            orders = saved ? JSON.parse(saved) : [];
-            loadingScreen.classList.add('hidden');
-            renderOrders();
-        };
-
-        const startCloudMode = (db) => {
-            isCloudMode = true;
-            cloudStatus.innerText = 'גיבוי ענן פעיל';
-            const ordersCol = collection(db, 'artifacts', appId, 'public', 'data', 'cake_orders');
-            onSnapshot(ordersCol, (snapshot) => {
-                orders = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-                orders.sort((a, b) => new Date(a.date) - new Date(b.date));
-                loadingScreen.classList.add('hidden');
-                renderOrders();
-            }, (err) => {
-                console.error("Firestore Error", err);
-                startLocalMode();
-            });
-        };
-
-        const saveToStore = async (data, id) => {
-            if (isCloudMode) {
-                const app = initializeApp(firebaseConfig);
-                const db = getFirestore(app);
-                await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'cake_orders', id), data, { merge: true });
-            } else {
-                const existingIndex = orders.findIndex(o => o.id === id);
-                if (existingIndex > -1) {
-                    orders[existingIndex] = { ...data, id };
-                } else {
-                    orders.push({ ...data, id });
-                }
-                localStorage.setItem('cake_orders_local', JSON.stringify(orders));
-                renderOrders();
-            }
-        };
-
-        const deleteFromStore = async (id) => {
-            if (isCloudMode) {
-                const app = initializeApp(firebaseConfig);
-                const db = getFirestore(app);
-                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'cake_orders', id));
-            } else {
-                orders = orders.filter(o => o.id !== id);
-                localStorage.setItem('cake_orders_local', JSON.stringify(orders));
-                renderOrders();
-            }
-        };
-
-        // --- UI Logic ---
-
-        const renderOrders = () => {
-            ordersList.innerHTML = orders.length === 0 
-                ? `<div class="text-center py-20 text-slate-400"><i data-lucide="cake" class="mx-auto mb-4 opacity-20 w-12 h-12"></i><p>אין הזמנות כרגע</p></div>`
-                : orders.map(order => `
-                    <div class="bg-white rounded-xl shadow-sm border border-pink-50 overflow-hidden mb-3">
-                        <div class="p-4 flex items-center justify-between cursor-pointer" onclick="toggleExpand('${order.id}')">
-                            <div class="flex items-center gap-3">
-                                <div class="w-12 h-12 rounded-lg bg-pink-50 flex items-center justify-center border shrink-0 overflow-hidden text-pink-200">
-                                    <i data-lucide="camera" class="w-5 h-5"></i>
-                                </div>
-                                <div>
-                                    <div class="flex items-center gap-2 mb-1">
-                                        <h3 class="font-bold text-slate-800">${order.customer}</h3>
-                                        ${order.pickupTime ? `<span class="text-[10px] px-2 py-0.5 rounded-full border font-bold ${getTimeClass(order.pickupTime)}">${order.pickupTime}</span>` : ''}
-                                    </div>
-                                    <p class="text-sm text-pink-500 font-bold">${order.date ? order.date.split('-').reverse().join('/') : 'ללא תאריך'}</p>
-                                </div>
-                            </div>
-                            <div class="flex items-center gap-2">
-                                <span class="font-bold text-slate-700 text-lg">₪${order.price || '0'}</span>
-                                <i data-lucide="chevron-down" id="icon-${order.id}" class="text-slate-400 w-5 h-5 transition-transform"></i>
-                            </div>
-                        </div>
-                        <div id="details-${order.id}" class="hidden p-4 bg-slate-50 border-t space-y-3">
-                            <button onclick="editOrder('${order.id}')" class="w-full bg-white border border-pink-200 text-pink-600 py-3 rounded-xl flex items-center justify-center gap-2 font-bold shadow-sm active:bg-pink-50">
-                                <i data-lucide="edit-2" class="w-4 h-4"></i> עריכת הזמנה
-                            </button>
-                            ${order.notes && order.notes.includes('אלרגנים') ? `
-                                <div class="bg-red-50 p-3 rounded-xl border border-red-200 text-red-700 text-sm font-bold flex items-center gap-2">
-                                    <i data-lucide="alert-triangle" class="w-4 h-4"></i>
-                                    <span>${order.notes}</span>
-                                </div>
-                            ` : ''}
-                            <div class="bg-white p-4 rounded-xl border border-slate-200 text-sm whitespace-pre-wrap leading-relaxed text-slate-700">
-                                ${order.details || 'אין פירוט'}
-                            </div>
-                            <div class="flex justify-between items-center pt-2">
-                                <button onclick="window.deleteOrderUI('${order.id}')" class="text-red-400 text-xs flex items-center gap-1 font-medium"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> מחיקה</button>
-                                <span class="text-[10px] text-slate-300">סוג: ${isCloudMode ? 'ענן' : 'מקומי'}</span>
-                            </div>
-                        </div>
-                    </div>
-                `).join('');
-            lucide.createIcons();
-        };
-
-        const getTimeClass = (time) => {
-            if (time === 'בוקר') return 'bg-yellow-100 text-yellow-700 border-yellow-200';
-            if (time === 'צהריים') return 'bg-orange-100 text-orange-700 border-orange-200';
-            return 'bg-indigo-100 text-indigo-700 border-indigo-200';
-        };
-
-        // Window exposed functions
-        window.toggleExpand = (id) => {
-            const el = document.getElementById(`details-${id}`);
-            const icon = document.getElementById(`icon-${id}`);
-            el.classList.toggle('hidden');
-            icon.classList.toggle('rotate-180');
-        };
-
-        window.openModal = (type) => {
-            window.editingId = null;
-            document.getElementById('order-form').reset();
-            document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('bg-pink-600', 'text-white', 'time-active'));
-            document.getElementById('order-modal').classList.remove('hidden');
-            if (type === 'import') {
-                document.getElementById('import-view').classList.remove('hidden');
-                document.getElementById('form-view').classList.add('hidden');
-            } else {
-                document.getElementById('import-view').classList.add('hidden');
-                document.getElementById('form-view').classList.remove('hidden');
-            }
-        };
-
-        window.closeModal = () => document.getElementById('order-modal').classList.add('hidden');
-
-        window.handleImport = () => {
-            const text = document.getElementById('import-text').value;
-            if (!text) return;
-            
-            const lines = text.split('\n').map(l => l.trim()).filter(l => l);
-            let customer = lines[0]?.split(':')[0]?.replace(/[🎂*]/g, '').trim() || "";
-            let price = text.match(/(\d+)/)?.[0] || "";
-            let date = "";
-            const dateMatch = text.match(/(\d{1,2}\/\d{1,2}\/\d{4})/);
-            if (dateMatch) {
-                const [d, m, y] = dateMatch[1].split('/');
-                date = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
-            }
-
-            document.getElementById('f-customer').value = customer;
-            document.getElementById('f-price').value = price;
-            document.getElementById('f-date').value = date;
-            document.getElementById('f-details').value = text;
-            
-            document.getElementById('import-view').classList.add('hidden');
-            document.getElementById('form-view').classList.remove('hidden');
-        };
-
-        window.saveOrderUI = async (e) => {
-            e.preventDefault();
-            const id = window.editingId || Date.now().toString();
-            const orderData = {
-                customer: document.getElementById('f-customer').value,
-                price: document.getElementById('f-price').value,
-                date: document.getElementById('f-date').value,
-                pickupTime: document.querySelector('button.time-active')?.dataset.time || '',
-                details: document.getElementById('f-details').value,
-                notes: document.getElementById('f-notes').value,
-                updatedAt: new Date().toISOString()
-            };
-
-            await saveToStore(orderData, id);
-            closeModal();
-        };
-
-        window.deleteOrderUI = async (id) => {
-            if (confirm("למחוק הזמנה?")) {
-                await deleteFromStore(id);
-            }
-        };
-
-        window.editOrder = (id) => {
-            const o = orders.find(x => x.id === id);
-            window.editingId = id;
-            document.getElementById('f-customer').value = o.customer || '';
-            document.getElementById('f-price').value = o.price || '';
-            document.getElementById('f-date').value = o.date || '';
-            document.getElementById('f-details').value = o.details || '';
-            document.getElementById('f-notes').value = o.notes || '';
-            
-            document.getElementById('order-modal').classList.remove('hidden');
-            document.getElementById('import-view').classList.add('hidden');
-            document.getElementById('form-view').classList.remove('hidden');
-            
-            if (o.pickupTime) {
-                const btn = document.querySelector(`button[data-time="${o.pickupTime}"]`);
-                if (btn) window.setTime(btn, o.pickupTime);
-            }
-        };
-
-        window.setTime = (btn, val) => {
-            document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('bg-pink-600', 'text-white', 'time-active'));
-            btn.classList.add('bg-pink-600', 'text-white', 'time-active');
-        };
-
-        window.onload = init;
-    </script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;700&display=swap');
-        body { font-family: 'Assistant', sans-serif; }
+        body { font-family: 'Assistant', sans-serif; -webkit-tap-highlight-color: transparent; }
+        .modal-animate { animation: slideUp 0.3s ease-out; }
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
     </style>
 </head>
-<body class="bg-slate-50 min-h-screen pb-10">
-
-    <!-- Loading -->
-    <div id="loading-screen" class="fixed inset-0 bg-white z-[100] flex flex-col items-center justify-center">
-        <div class="w-12 h-12 border-4 border-pink-200 border-t-pink-600 rounded-full animate-spin mb-4"></div>
-        <p class="text-slate-500 font-bold">מתחבר למערכת של שירן...</p>
-    </div>
+<body class="bg-slate-50 min-h-screen pb-20">
 
     <!-- Header -->
-    <header class="bg-pink-600 text-white p-4 shadow-md flex justify-between items-center sticky top-0 z-30">
+    <header class="bg-pink-600 text-white p-4 shadow-lg sticky top-0 z-40 flex justify-between items-center">
         <div class="flex items-center gap-2">
             <i data-lucide="cake"></i>
             <div>
-                <h1 class="text-lg font-bold leading-none">הזמנות שלי</h1>
-                <span id="cloud-status" class="text-[10px] opacity-70 italic tracking-wide">בודק חיבור...</span>
+                <h1 class="text-lg font-bold">הזמנות שירן</h1>
+                <span id="status-badge" class="text-[10px] bg-white/20 px-2 py-0.5 rounded-full">מצב מקומי</span>
             </div>
         </div>
-        <div class="flex gap-2">
-            <button onclick="openModal('import')" class="bg-white/20 p-2 rounded-full active:scale-90"><i data-lucide="wand-2" class="w-5 h-5"></i></button>
-            <button onclick="openModal('form')" class="bg-white text-pink-600 p-2 rounded-full shadow-sm active:scale-90"><i data-lucide="plus" class="w-5 h-5"></i></button>
+        <div class="flex gap-3">
+            <button onclick="openModal('import')" class="p-2 bg-white/10 rounded-full active:scale-90 transition-transform">
+                <i data-lucide="wand-2" class="w-5 h-5"></i>
+            </button>
+            <button onclick="openModal('form')" class="p-2 bg-white rounded-full text-pink-600 shadow-md active:scale-90 transition-transform">
+                <i data-lucide="plus" class="w-6 h-6"></i>
+            </button>
         </div>
     </header>
 
-    <!-- Main List -->
-    <main id="orders-list" class="p-4 max-w-xl mx-auto"></main>
+    <!-- Content -->
+    <main id="orders-list" class="p-4 max-w-xl mx-auto space-y-4">
+        <!-- Orders will be injected here -->
+    </main>
 
-    <!-- Modal -->
-    <div id="order-modal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-end sm:items-center justify-center backdrop-blur-sm p-4">
-        <div class="bg-white w-full max-w-lg rounded-3xl p-6 max-h-[90vh] overflow-y-auto relative shadow-2xl">
-            <div class="flex justify-between items-center mb-6">
-                <h2 class="font-bold text-xl text-slate-800">פרטי הזמנה</h2>
-                <button onclick="closeModal()" class="text-slate-400 bg-slate-100 p-1.5 rounded-full"><i data-lucide="x"></i></button>
+    <!-- Modal Container -->
+    <div id="modal-overlay" class="fixed inset-0 bg-black/50 z-50 hidden backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div id="modal-content" class="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden modal-animate">
+            <div class="p-4 border-b flex justify-between items-center bg-slate-50">
+                <h2 id="modal-title" class="font-bold text-slate-800">הזמנה חדשה</h2>
+                <button onclick="closeModal()" class="p-2 text-slate-400"><i data-lucide="x"></i></button>
             </div>
+            
+            <div class="p-6 max-h-[80vh] overflow-y-auto">
+                <!-- Import Mode -->
+                <div id="view-import" class="space-y-4">
+                    <p class="text-sm text-slate-500">הדביקי את סיכום ההזמנה מהווטסאפ:</p>
+                    <textarea id="import-text" class="w-full h-40 p-4 border rounded-xl text-sm focus:ring-2 focus:ring-pink-500 outline-none" placeholder="הדביקי כאן..."></textarea>
+                    <button onclick="processImport()" class="w-full bg-pink-600 text-white py-4 rounded-xl font-bold shadow-lg active:bg-pink-700">חלצי נתונים</button>
+                </div>
 
-            <!-- Import View -->
-            <div id="import-view" class="space-y-4">
-                <p class="text-xs text-slate-500">הדביקי הודעת סיכום ווטסאפ כאן:</p>
-                <textarea id="import-text" class="w-full p-4 bg-slate-50 border rounded-2xl min-h-[180px] text-sm outline-none focus:border-pink-400" placeholder="הדביקי הודעה..."></textarea>
-                <button onclick="handleImport()" class="w-full bg-pink-600 text-white py-4 rounded-2xl font-bold text-lg">חלצי פרטים</button>
-            </div>
-
-            <!-- Form View -->
-            <div id="form-view" class="hidden">
-                <form onsubmit="saveOrderUI(event)" id="order-form" class="space-y-4">
+                <!-- Manual/Edit Mode -->
+                <form id="order-form" onsubmit="handleSave(event)" class="hidden space-y-4">
                     <div class="grid grid-cols-2 gap-3">
-                        <div>
-                            <label class="text-xs font-bold text-slate-500 block mb-1">לקוחה</label>
-                            <input id="f-customer" required class="w-full p-3 bg-slate-50 border rounded-xl text-sm outline-none focus:border-pink-300">
+                        <div class="col-span-2">
+                            <label class="text-xs font-bold text-slate-400 block mb-1">שם לקוחה</label>
+                            <input type="text" id="f-name" required class="w-full p-3 bg-slate-50 border rounded-xl outline-none focus:border-pink-400">
                         </div>
                         <div>
-                            <label class="text-xs font-bold text-slate-500 block mb-1">מחיר ₪</label>
-                            <input id="f-price" type="number" class="w-full p-3 bg-slate-100 border rounded-xl text-sm outline-none">
+                            <label class="text-xs font-bold text-slate-400 block mb-1">תאריך</label>
+                            <input type="date" id="f-date" required class="w-full p-3 bg-slate-50 border rounded-xl outline-none">
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-slate-400 block mb-1">מחיר ₪</label>
+                            <input type="number" id="f-price" class="w-full p-3 bg-slate-50 border rounded-xl outline-none">
                         </div>
                     </div>
                     <div>
-                        <label class="text-xs font-bold text-slate-500 block mb-1">זמן איסוף</label>
-                        <div class="flex gap-2">
-                            <button type="button" onclick="setTime(this, 'בוקר')" data-time="בוקר" class="time-btn flex-1 py-3 text-xs rounded-xl font-bold border border-slate-200">בוקר</button>
-                            <button type="button" onclick="setTime(this, 'צהריים')" data-time="צהריים" class="time-btn flex-1 py-3 text-xs rounded-xl font-bold border border-slate-200">צהריים</button>
-                            <button type="button" onclick="setTime(this, 'ערב')" data-time="ערב" class="time-btn flex-1 py-3 text-xs rounded-xl font-bold border border-slate-200">ערב</button>
-                        </div>
+                        <label class="text-xs font-bold text-slate-400 block mb-1">זמן איסוף</label>
+                        <select id="f-time" class="w-full p-3 bg-slate-50 border rounded-xl outline-none">
+                            <option value="בוקר">בוקר</option>
+                            <option value="צהריים">צהריים</option>
+                            <option value="ערב">ערב</option>
+                        </select>
                     </div>
                     <div>
-                        <label class="text-xs font-bold text-slate-500 block mb-1">תאריך</label>
-                        <input id="f-date" type="date" required class="w-full p-3 bg-slate-50 border rounded-xl text-sm outline-none focus:border-pink-300">
+                        <label class="text-xs font-bold text-slate-400 block mb-1">פרטי העוגה</label>
+                        <textarea id="f-details" rows="3" class="w-full p-3 bg-slate-50 border rounded-xl outline-none"></textarea>
                     </div>
-                    <div>
-                        <label class="text-xs font-bold text-slate-500 block mb-1">פירוט עוגה</label>
-                        <textarea id="f-details" rows="3" class="w-full p-3 bg-slate-50 border rounded-xl text-sm outline-none focus:border-pink-300"></textarea>
+                    <div class="bg-red-50 p-3 rounded-xl border border-red-100">
+                        <label class="text-xs font-bold text-red-400 block mb-1">אלרגנים / הערות דחופות</label>
+                        <input type="text" id="f-notes" class="w-full bg-transparent border-none outline-none text-red-700 font-bold placeholder:text-red-200" placeholder="אין">
                     </div>
-                    <div>
-                        <label class="text-xs font-bold text-red-500 block mb-1 flex items-center gap-1"><i data-lucide="alert-triangle" class="w-3 h-3"></i> אלרגנים בלבד</label>
-                        <input id="f-notes" class="w-full p-3 bg-red-50 border-red-100 border rounded-xl text-sm outline-none text-red-700 font-bold" placeholder="למשל: אלרגי לשומשום">
-                    </div>
-                    <button type="submit" class="w-full bg-pink-600 text-white py-4 rounded-2xl font-bold text-lg shadow-lg">שמירה</button>
+                    <button type="submit" class="w-full bg-pink-600 text-white py-4 rounded-xl font-bold shadow-lg">שמירה</button>
                 </form>
             </div>
         </div>
     </div>
 
+    <script>
+        // State
+        let orders = JSON.parse(localStorage.getItem('shiran_orders') || '[]');
+        let currentEditId = null;
+
+        // Render UI
+        function render() {
+            const container = document.getElementById('orders-list');
+            if (orders.length === 0) {
+                container.innerHTML = `<div class="text-center py-20 text-slate-300"><i data-lucide="cake" class="w-12 h-12 mx-auto mb-2 opacity-20"></i><p>אין הזמנות כרגע</p></div>`;
+            } else {
+                // Sort by date
+                const sorted = [...orders].sort((a, b) => new Date(a.date) - new Date(b.date));
+                container.innerHTML = sorted.map(o => `
+                    <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+                        <div class="p-4 flex items-center justify-between" onclick="toggleDetails('${o.id}')">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 bg-pink-50 rounded-full flex items-center justify-center text-pink-500">
+                                    <i data-lucide="calendar"></i>
+                                </div>
+                                <div>
+                                    <h3 class="font-bold text-slate-800">${o.name}</h3>
+                                    <p class="text-xs text-pink-500 font-bold">${o.date.split('-').reverse().join('/')} | ${o.time}</p>
+                                </div>
+                            </div>
+                            <div class="text-left">
+                                <div class="font-bold text-slate-700 text-lg">₪${o.price || 0}</div>
+                                <i data-lucide="chevron-down" id="icon-${o.id}" class="w-4 h-4 text-slate-300 transition-transform"></i>
+                            </div>
+                        </div>
+                        <div id="details-${o.id}" class="hidden px-4 pb-4 space-y-3 border-t border-slate-50 pt-3">
+                            ${o.notes ? `<div class="bg-red-50 p-2 rounded-lg text-red-600 text-xs font-bold flex items-center gap-2"><i data-lucide="alert-circle" class="w-3 h-3"></i> ${o.notes}</div>` : ''}
+                            <div class="text-sm text-slate-600 bg-slate-50 p-3 rounded-xl whitespace-pre-wrap">${o.details || 'אין פירוט נוסף'}</div>
+                            <div class="flex gap-2">
+                                <button onclick="editOrder('${o.id}')" class="flex-1 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold">עריכה</button>
+                                <button onclick="deleteOrder('${o.id}')" class="px-4 py-2 text-red-400 rounded-lg text-xs"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            }
+            lucide.createIcons();
+            localStorage.setItem('shiran_orders', JSON.stringify(orders));
+        }
+
+        // Logic
+        window.toggleDetails = (id) => {
+            const d = document.getElementById(`details-${id}`);
+            const i = document.getElementById(`icon-${id}`);
+            d.classList.toggle('hidden');
+            i.classList.toggle('rotate-180');
+        };
+
+        window.openModal = (mode) => {
+            document.getElementById('modal-overlay').classList.remove('hidden');
+            if (mode === 'import') {
+                document.getElementById('view-import').classList.remove('hidden');
+                document.getElementById('order-form').classList.add('hidden');
+                document.getElementById('modal-title').innerText = "ייבוא מהודעה";
+            } else {
+                document.getElementById('view-import').classList.add('hidden');
+                document.getElementById('order-form').classList.remove('hidden');
+                document.getElementById('modal-title').innerText = currentEditId ? "עריכת הזמנה" : "הזמנה ידנית";
+            }
+        };
+
+        window.closeModal = () => {
+            document.getElementById('modal-overlay').classList.add('hidden');
+            document.getElementById('order-form').reset();
+            currentEditId = null;
+        };
+
+        window.processImport = () => {
+            const text = document.getElementById('import-text').value;
+            if (!text) return;
+
+            // Simple parser
+            const name = text.split('\n')[0].split(':')[0].replace(/[🎂*]/g, '').trim();
+            const price = text.match(/(\d+)/)?.[0] || "";
+            const dateMatch = text.match(/(\d{1,2}\/\d{1,2}\/\d{4})/);
+            let date = "";
+            if (dateMatch) {
+                const [d, m, y] = dateMatch[1].split('/');
+                date = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+            }
+
+            document.getElementById('f-name').value = name;
+            document.getElementById('f-price').value = price;
+            document.getElementById('f-date').value = date;
+            document.getElementById('f-details').value = text;
+            
+            document.getElementById('view-import').classList.add('hidden');
+            document.getElementById('order-form').classList.remove('hidden');
+        };
+
+        window.handleSave = (e) => {
+            e.preventDefault();
+            const data = {
+                id: currentEditId || Date.now().toString(),
+                name: document.getElementById('f-name').value,
+                date: document.getElementById('f-date').value,
+                price: document.getElementById('f-price').value,
+                time: document.getElementById('f-time').value,
+                details: document.getElementById('f-details').value,
+                notes: document.getElementById('f-notes').value,
+            };
+
+            if (currentEditId) {
+                orders = orders.map(o => o.id === currentEditId ? data : o);
+            } else {
+                orders.push(data);
+            }
+
+            closeModal();
+            render();
+        };
+
+        window.editOrder = (id) => {
+            const o = orders.find(x => x.id === id);
+            currentEditId = id;
+            document.getElementById('f-name').value = o.name;
+            document.getElementById('f-date').value = o.date;
+            document.getElementById('f-price').value = o.price;
+            document.getElementById('f-time').value = o.time;
+            document.getElementById('f-details').value = o.details;
+            document.getElementById('f-notes').value = o.notes;
+            openModal('form');
+        };
+
+        window.deleteOrder = (id) => {
+            if (confirm("למחוק הזמנה?")) {
+                orders = orders.filter(o => o.id !== id);
+                render();
+            }
+        };
+
+        // Start
+        render();
+    </script>
 </body>
 </html>
